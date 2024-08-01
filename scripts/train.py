@@ -75,9 +75,10 @@ def train(configs):
         else:
             optim_dict[optim_option] = False
             print("{} optimization is OFF".format(optim_option))
+            print("{} optimization is OFF".format(optim_option))
 
     # Choose Different grid generator according to configs
-    if optim_dict["vertices_rgb"] and optim_dict["vertices_label"] and (not optim_dict["vertices_z"]):
+    if optim_dict["vertices_rgb"] and optim_dict["vertices_label"] and (not optim_dict["vertices_z"]):#默认会进入这个条件
         from models.voxel import SquareFlatGridRGBLabel as SquareFlatGrid
     elif optim_dict["vertices_rgb"] and (not optim_dict["vertices_label"]) and optim_dict["vertices_z"]:
         from models.voxel import SquareFlatGridRGBZ as SquareFlatGrid
@@ -92,14 +93,15 @@ def train(configs):
     else:
         raise NotImplementedError("No such grid generator, please check your config[\"lr\"]")
 
+    #生成grid
     if optim_dict["vertices_z"]:
         grid = SquareFlatGrid(configs["bev_x_length"], configs["bev_y_length"], offset_pose_xy,
                               configs["bev_resolution"], dataset.num_class, configs["pos_enc"], configs["cut_range"])
-    else:
+    else:#默认会进入这个条件！
         grid = SquareFlatGrid(configs["bev_x_length"], configs["bev_y_length"], offset_pose_xy,
                               configs["bev_resolution"], dataset.num_class, configs["cut_range"])
     grid = grid.to(device)
-    grid.init_vertices_z()
+    grid.init_vertices_z()#mesh顶点的所有高程全部默认设置成了零
 
     # Prepare trainable parameters
     parameters = []
@@ -117,7 +119,8 @@ def train(configs):
 
     # Prepare loss function and optimizer
     optimizer = torch.optim.Adam(parameters)
-    scheduler = MultiStepLR(optimizer, milestones=configs["lr_milestones"], gamma=configs["lr_gamma"])
+    #等间隔调整学习率
+    scheduler = MultiStepLR(optimizer, milestones=configs["lr_milestones"], gamma=configs["lr_gamma"])#这个是pytorch的代码
     if optim_dict["vertices_z"]:
         z_optimizer = torch.optim.Adam(z_parameters)
     if optim_dict["translations"] or optim_dict["rotations"]:
@@ -161,8 +164,8 @@ def train(configs):
                     if key != "image_path":
                         sample[key] = ipt.clone().detach().to(device)
                 if optim_dict["vertices_z"]:
-                    mesh = grid(activation_idx, configs["batch_size"])
-                else:
+                    mesh = grid(activation_idx, configs["batch_size"])#非常注意！ 这个grid本质上的数据结构来自pytorch3d
+                else:#默认进入这个条件！！！！！！！
                     mesh = grid(configs["batch_size"])
                 pose = poses(sample["camera_idx"])
                 if epoch >= configs["extrinsic"]["start_epoch"]:
@@ -188,7 +191,7 @@ def train(configs):
                     gt_depth = sample["depth"]
                 gt_seg = sample["static_label"]
 
-                images_feature, depth = renderer({"mesh": mesh, "cameras": cameras})
+                images_feature, depth = renderer({"mesh": mesh, "cameras": cameras})#非常重要的函数！！！！！！！！！！
                 silhouette = images_feature[:, :, :, -1]
                 silhouette[silhouette > 0] = 1
                 silhouette = torch.unsqueeze(silhouette, -1)
@@ -203,29 +206,37 @@ def train(configs):
                 else:
                     images_seg = images_feature[:, :, :, :-1]
 
-                optimizer.zero_grad()
+                optimizer.zero_grad()#清空梯度，梯度不自动清空，因此反向传播
                 if optim_dict["vertices_z"]:
                     z_optimizer.zero_grad()
                 if optim_dict["translations"] or optim_dict["rotations"]:
                     pose_optimizer.zero_grad()
                 total_loss = 0
+                #1.图像纹理的loss
+                #images = 渲染出来的图像
+                #gt_image = 真实拍到的图像
                 if optim_dict["vertices_rgb"]:
                     render_loss = loss_fuction(images, gt_image, mask)
                     total_loss += render_loss.mean()
+
+                #2.图像中每个像素的语义loss
                 if optim_dict["vertices_label"]:
                     seg_loss = CE_loss_with_mask(images_seg.reshape(-1, images_seg.shape[-1]),
                                                  gt_seg.reshape(-1), mask.reshape(-1)) * configs["seg_loss_weight"]
                     total_loss += seg_loss
+
                 if optim_dict["vertices_z"]:
                     if configs["dataset"] in supervise_depth_list:
                         mask_depth = gt_depth > 0
+                        #3.深度losss
                         depth_loss = depth_loss_fuction(depth, gt_depth, mask * mask_depth) * configs["depth_loss_weight"]
                         total_loss += depth_loss.mean()
-                    laplacian_loss = mesh_laplacian_smoothing(mesh) * configs["laplacian_loss_weight"]
+                    #4.mesh的平滑loss
+                    laplacian_loss = mesh_laplacian_smoothing(mesh) * configs["laplacian_loss_weight"]#mesh_laplacian_smoothing函数来自pytorch3d
                     total_loss += laplacian_loss
 
-                total_loss.backward()
-                optimizer.step()
+                total_loss.backward()#执行反向传播算法以计算模型参数的梯度。    
+                optimizer.step()#执行一次梯度更新 解算delta_x,这里代码并没有将optimizer
                 z_optimizer.step() if z_parameters else None
                 pose_optimizer.step() if pose_parameters else None
                 if optim_dict["vertices_rgb"]:
@@ -238,6 +249,9 @@ def train(configs):
                         loss_dict["depth_loss"] += depth_loss.mean().detach().cpu().numpy()
 
                 loss_dict["total_loss"] += total_loss.detach().cpu().numpy()
+
+
+        #完成waypoint的遍历
         scheduler.step()
         with torch.no_grad():
             if optim_dict["vertices_z"]:

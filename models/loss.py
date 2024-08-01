@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-
+#这个类没有被使用
 class SmoothLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -20,7 +20,7 @@ class SmoothLoss(nn.Module):
 
         return grad_disp_x.mean() + grad_disp_y.mean()
 
-
+#这个loss是图像渲染和深度图的loss
 class L1MaskedLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -31,7 +31,7 @@ class L1MaskedLoss(nn.Module):
         loss = loss * mask
         return loss
 
-
+#在评测的时候使用了
 class MESMaskedLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -43,6 +43,7 @@ class MESMaskedLoss(nn.Module):
         return loss
 
 
+#这个类没有被使用
 class SSIM(nn.Module):
     """Layer to compute the SSIM loss between a pair of images
     """

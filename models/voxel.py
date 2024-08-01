@@ -130,6 +130,8 @@ class SquareFlatGridBase(nn.Module):
         self.register_buffer('vertices', vertices)
         self.register_buffer('faces', faces)
 
+    #默认会调用这个函数！！！！！！！
+    #mesh顶点的所有高程全部默认设置成了零
     def init_vertices_z(self):
         with torch.no_grad():
             self.vertices_z = torch.zeros((self.norm_xy.shape[0], 1), device=self.norm_xy.device)
@@ -160,9 +162,10 @@ class SquareFlatGridRGB(SquareFlatGridBase):
 
     def forward(self, batch_size=1):
         constrained_vertices_rgb = (torch.tanh(self.vertices_rgb) + 1)/2
-        self.texture = TexturesVertex(verts_features=constrained_vertices_rgb)
+        self.texture = TexturesVertex(verts_features=constrained_vertices_rgb)#这个是pytorch3d的函数！！！！！！！！
         self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)
         return self.mesh.extend(batch_size)
+
 
 
 class SquareFlatGridLabel(SquareFlatGridBase):
@@ -177,10 +180,10 @@ class SquareFlatGridLabel(SquareFlatGridBase):
         self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)
         return self.mesh.extend(batch_size)
 
-
+#优化grid的rgb label 不优化z，默认使用的是这个类
 class SquareFlatGridRGBLabel(SquareFlatGridBase):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, num_classes=None, cut_range=30):
-        super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, cut_range)
+        super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, cut_range)#父类的构造函数超级重要！！！！！
         num_vertices = self.vertices.shape[0]
         self.vertices_rgb = nn.Parameter(torch.zeros_like(self.vertices)[None])
         self.vertices_label = nn.Parameter(torch.zeros((1, num_vertices, num_classes), dtype=torch.float32))
@@ -196,9 +199,9 @@ class SquareFlatGridRGBLabel(SquareFlatGridBase):
         # constrained_vertices_rgb[:, :, 2] = torch.pow((1 - norm_x), 0.5)
 
         softmax_vertices_label = torch.softmax(self.vertices_label, dim=-1)
-        features = torch.cat((constrained_vertices_rgb, softmax_vertices_label), dim=-1)
-        self.texture = TexturesVertex(verts_features=features)
-        self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)
+        features = torch.cat((constrained_vertices_rgb, softmax_vertices_label), dim=-1)#将两个tensor进行拼接，
+        self.texture = TexturesVertex(verts_features=features)#这个是pytorch3d的函数！
+        self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)#这个应该是pytorch3d的函数!
         return self.mesh.extend(batch_size)
 
 
