@@ -38,7 +38,8 @@ def createFlatMesh(x_length, y_length, resolution=0.1):
     faces = faces.reshape(-1, 3)
     return vertices, faces, (num_vertices_x, num_vertices_y)
 
-
+#先获取grid的长宽，生成mesh，其中z轴的坐标等于0，xy分别进行采样间隔进行插值
+#返回的mesh顶点和面片信息都是torch的数据结构
 def createHiveFlatMesh(x_length, y_length, resolution=0.1):
     """
     Create a flat hive mesh.
@@ -68,6 +69,7 @@ def createHiveFlatMesh(x_length, y_length, resolution=0.1):
 
     # 2 means top-right and bottom-left triangles
     # 3 means 3 vertices of each trianle
+    #每个面由两个三角形组成，每个三角形由三个顶点定义
     faces = torch.zeros((num_vertices_x - 1, num_vertices_y - 1, 2, 3), dtype=torch.int64)
     all_indices = torch.arange(0, num_vertices_x * num_vertices_y, 1, dtype=torch.int64).reshape((num_vertices_x, num_vertices_y))
     faces[:, :, 0, 0] = all_indices[:-1, :-1]
@@ -83,7 +85,8 @@ def createHiveFlatMesh(x_length, y_length, resolution=0.1):
     faces = faces.reshape(-1, 3)
     return vertices, faces, (num_vertices_x, num_vertices_y)
 
-
+#对于这个函数我个人的理解是，每个位姿都会观测到一片的cut范围，那么多个位姿观测到的所有cut聚合到一起就知道哪些mesh顶点式有效的了
+#返回车辆影响的mesh
 def cutHiveMeshWithPoses(vertices, faces, bev_size_pixel, x_length, y_length, poses_xy, resolution=0.1, cut_range=30):
     """
     Cut mesh using poses
@@ -122,7 +125,7 @@ def cutHiveMeshWithPoses(vertices, faces, bev_size_pixel, x_length, y_length, po
     # cv2.imwrite('mask_dilate.png', mask.astype(np.uint8) * 255)
 
     # give faces colors
-    face_quality = np.ones((num_vertices_x - 1, num_vertices_y - 1, 2, 1), dtype=np.float64)
+    face_quality = np.ones((num_vertices_x - 1, num_vertices_y - 1, 2, 1), dtype=np.float64)#
     face_quality[mask == 0, :, 0] = 0.0
     face_quality = face_quality.reshape(-1, 1)
     source_mesh = pymeshlab.Mesh(vertex_matrix=vertices.numpy(), face_matrix=faces.numpy(), f_quality_array=face_quality)

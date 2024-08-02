@@ -109,23 +109,35 @@ class FeatureMLP(nn.Module):
         return vertices_z
 
 
+#非常重要的基类是，用于生成grid的mesh
 class SquareFlatGridBase(nn.Module):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, cut_range):
         super().__init__()
         self.bev_x_length = bev_x_length
         self.bev_y_length = bev_y_length
         self.resolution = resolution
+        #1.根据grid的x和y的分辨率大小，生成mesh，其中mesh顶点z等于0
+        #bev_size_pixel = x轴有多少个顶点， z轴有多少个顶点
+        #返回的vertices和faces都是torch的数据结构
         vertices, faces, self.bev_size_pixel = createHiveFlatMesh(bev_x_length, bev_y_length, resolution)
         print(f"Before cutting: {vertices.shape[0]} vertices, {faces.shape[0]} faces")
+
+        #2.车辆行驶的轨迹会影响观测到的地面范围
+        #最终将全局生成的mesh选择被轨迹影响的那部分mesh，返回的结果也是torch的数据结构！！！！！
         vertices, faces, self.bev_size_pixel = cutHiveMeshWithPoses(vertices, faces, self.bev_size_pixel,
                                                                     bev_x_length, bev_y_length, pose_xy,
-                                                                    resolution, cut_range)
+                                                                    resolution, cut_range)#cut_range 远远小于bev_size_pixel
         print(f"After cutting: {vertices.shape[0]} vertices, {faces.shape[0]} faces")
+
+
         self.texture = None
         self.mesh = None
-        norm_x = vertices[:, 0]/self.bev_x_length * 2 - 1
-        norm_y = vertices[:, 1]/self.bev_y_length * 2 - 1
-        norm_xy = torch.cat([norm_x[:, None], norm_y[:, None]], dim=1)
+        norm_x = vertices[:, 0]/self.bev_x_length * 2 - 1#将所有的x坐标除以x_length
+        norm_y = vertices[:, 1]/self.bev_y_length * 2 - 1#将所有的y坐标除以y_length
+        norm_xy = torch.cat([norm_x[:, None], norm_y[:, None]], dim=1)#将两个一维张量 norm_x 和 norm_y 合并成一个二维张量
+        # 这个函数是pytorch的接口函数，是用于将模型训练时不会更新（即调用 optimizer.step() 后该组参数不会变化，只可人为地改变它们的值），
+        # 但是保存模型时，该组参数又作为模型参数不可或缺的一部分被保存。
+        # 它主要用于在 PyTorch 中注册一个不需要梯度的 Tensor，这个 Tensor 的 require_grad 会保持为 False
         self.register_buffer('norm_xy', norm_xy)
         self.register_buffer('vertices', vertices)
         self.register_buffer('faces', faces)
@@ -180,17 +192,20 @@ class SquareFlatGridLabel(SquareFlatGridBase):
         self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)
         return self.mesh.extend(batch_size)
 
-#优化grid的rgb label 不优化z，默认使用的是这个类
+#优化grid的rgb label 不优化z
 class SquareFlatGridRGBLabel(SquareFlatGridBase):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, num_classes=None, cut_range=30):
-        super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, cut_range)#父类的构造函数超级重要！！！！！
+        super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, cut_range)#父类的构造函数超级重要！！！！！！！！！！
         num_vertices = self.vertices.shape[0]
-        self.vertices_rgb = nn.Parameter(torch.zeros_like(self.vertices)[None])
+        #nn.Parameter的作用：首先可以把这个函数理解为类型转换函数，将一个不可训练的类型Tensor转换成可以训练的类型parameter并将这个parameter绑定到这个module里面
+        #vertices_rgb是每个顶点的颜色！！！！！
+        self.vertices_rgb = nn.Parameter(torch.zeros_like(self.vertices)[None])#这个函数创建一个与 self.vertices 形状相同的张量，但所有元素都初始化为零。
         self.vertices_label = nn.Parameter(torch.zeros((1, num_vertices, num_classes), dtype=torch.float32))
+
 
     def forward(self, batch_size=1):
         # constrained_vertices_rgb = (torch.tanh(self.vertices_rgb) + 1)/2
-        constrained_vertices_rgb = self.vertices_rgb
+        constrained_vertices_rgb = self.vertices_rgb#vertices_rgb是要被优化的张量！！！！！
         # norm_xy = self.norm_xy.clone()
         # norm_x = norm_xy[:, 0].unsqueeze(0)
         # norm_x = torch.clamp((norm_x + 1) / 2, 0, 1)
@@ -198,13 +213,13 @@ class SquareFlatGridRGBLabel(SquareFlatGridBase):
         # constrained_vertices_rgb[:, :, 1] = torch.pow((1 - norm_x), 0.5)
         # constrained_vertices_rgb[:, :, 2] = torch.pow((1 - norm_x), 0.5)
 
-        softmax_vertices_label = torch.softmax(self.vertices_label, dim=-1)
+        softmax_vertices_label = torch.softmax(self.vertices_label, dim=-1)#对语义进行归一化操作！！！！
         features = torch.cat((constrained_vertices_rgb, softmax_vertices_label), dim=-1)#将两个tensor进行拼接，
         self.texture = TexturesVertex(verts_features=features)#这个是pytorch3d的函数！
         self.mesh = Meshes(verts=[self.vertices], faces=[self.faces], textures=self.texture)#这个应该是pytorch3d的函数!
         return self.mesh.extend(batch_size)
 
-
+#默认使用的类！！！！
 class SquareFlatGridBaseZ(nn.Module):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, num_encoding=2, cut_range=30):
         super().__init__()
@@ -213,25 +228,28 @@ class SquareFlatGridBaseZ(nn.Module):
         self.resolution = resolution
         vertices, faces, self.bev_size_pixel = createHiveFlatMesh(bev_x_length, bev_y_length, resolution)
         print(f"Before cutting,  {vertices.shape[0]} vertices, {faces.shape[0]} faces")
+
         vertices, faces, self.bev_size_pixel = cutHiveMeshWithPoses(vertices, faces, self.bev_size_pixel,
                                                                     bev_x_length, bev_y_length, pose_xy,
                                                                     resolution, cut_range)
         print(f"After cutting,  {vertices.shape[0]} vertices, {faces.shape[0]} faces")
+
         self.texture = None
         self.mesh = None
-        self.register_buffer('faces', faces)
+        self.register_buffer('faces', faces)#非常重要！！！face不变
         self.mlp = HeightMLP(num_encoding=num_encoding, num_width=128)
         norm_x = vertices[:, 0]/self.bev_x_length * 2 - 1
         norm_y = vertices[:, 1]/self.bev_y_length * 2 - 1
         norm_xy = torch.cat([norm_x[:, None], norm_y[:, None]], dim=1)
         self.register_buffer('norm_xy', norm_xy)
-        self.register_buffer('vertices_xy', vertices[:, :2])
+        self.register_buffer('vertices_xy', vertices[:, :2])#一定要非常注意！！！这里只有将顶点x，y两个维度设置成了不优化变量！！！！！
 
     def get_activation_idx(self, center_xy, radius):
         distance = np.linalg.norm(self.vertices_xy.detach().cpu().numpy() - center_xy, ord=np.inf, axis=1)
         activation_idx = list(np.where(distance <= radius)[0])
         return activation_idx
 
+    #
     def init_vertices_z(self):
         with torch.no_grad():
             self.vertices_z = torch.zeros((self.norm_xy.shape[0], 1), device=self.norm_xy.device)
@@ -272,11 +290,12 @@ class SquareFlatGridLabelZ(SquareFlatGridBaseZ):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, num_classes, num_encoding=2, cut_range=30):
         super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, num_encoding, cut_range)
         num_vertices = self.vertices_xy.shape[0]
+        #新生成每个顶点的label张量，是要被优化的张量
         self.vertices_label = nn.Parameter(torch.zeros((1, num_vertices, num_classes), dtype=torch.float32))
 
     def forward(self, activated_idx=None, batch_size=1):
         softmax_vertices_label = torch.softmax(self.vertices_label, dim=-1)
-        if activated_idx is None:
+        if activated_idx is None:#默认是进入这个条件
             vertices_z = self.mlp(self.norm_xy)
         else:
             activtated_norm_xy = self.norm_xy[activated_idx]
@@ -292,19 +311,21 @@ class SquareFlatGridLabelZ(SquareFlatGridBaseZ):
         self.mesh = Meshes(verts=[vertices], faces=[self.faces], textures=self.texture)
         return self.mesh.extend(batch_size)
 
-
+#这个是rgb label 和z都优化，默认会进入这个条件
 class SquareFlatGridRGBLabelZ(SquareFlatGridBaseZ):
     def __init__(self, bev_x_length, bev_y_length, pose_xy, resolution, num_classes, num_encoding=2, cut_range=30):
         super().__init__(bev_x_length, bev_y_length, pose_xy, resolution, num_encoding, cut_range)
         num_vertices = self.vertices_xy.shape[0]
-        self.vertices_rgb = nn.Parameter(torch.zeros(num_vertices, 3)[None])
-        self.vertices_label = nn.Parameter(torch.zeros((1, num_vertices, num_classes), dtype=torch.float32))
+        #创建了一个全零的张量，并使用 [None] 增加了一个新的维度。具体来说，这段代码的作用是创建一个形状为 (1, num_vertices, 3) 的全零张量。
+        self.vertices_rgb = nn.Parameter(torch.zeros(num_vertices, 3)[None])#顶点的颜色！！！！待优化变量！！！
+        self.vertices_label = nn.Parameter(torch.zeros((1, num_vertices, num_classes), dtype=torch.float32))#每个顶点的语义信息！！！！！待优化变量！！！
 
+    # grid正向推理函数 能够得到mesh，然后mesh会送给渲染函数进行渲染得到图像！！！！！
     def forward(self, activated_idx=None, batch_size=1):
         constrained_vertices_rgb = (torch.tanh(self.vertices_rgb) + 1)/2
         softmax_vertices_label = torch.softmax(self.vertices_label, dim=-1)
         features = torch.cat((constrained_vertices_rgb, softmax_vertices_label), dim=-1)
-        if activated_idx is None:
+        if activated_idx is None:#默认进入这个条件！！！
             vertices_z = self.vertices_z
         else:
             activtated_norm_xy = self.norm_xy[activated_idx]
@@ -315,7 +336,8 @@ class SquareFlatGridRGBLabelZ(SquareFlatGridBaseZ):
                 self.vertices_z[activated_idx] = activated_vertices_z
                 vertices_z = self.vertices_z.detach()
             vertices_z[activated_idx] = activated_vertices_z
+
         vertices = torch.cat((self.vertices_xy, vertices_z), dim=1)
-        self.texture = TexturesVertex(verts_features=features)
-        self.mesh = Meshes(verts=[vertices], faces=[self.faces], textures=self.texture)
+        self.texture = TexturesVertex(verts_features=features)#texture = rgb + label，这个都是要被优化的变量！！！！
+        self.mesh = Meshes(verts=[vertices], faces=[self.faces], textures=self.texture)#顶点的xy会被优化，但是face不会被优化，textures也会被优化
         return self.mesh.extend(batch_size)

@@ -37,7 +37,7 @@ def hard_channel_blend(
     #图像上有多少个像素点是背景
     num_background_pixels = is_background.sum()
 
-    # Set background color.将背景颜色设置为指定颜色！！！！！！！
+    # Set background color.
     #这段代码的目的是通过 masked_scatter 将背景像素的颜色设置为指定的背景颜色 background_color。这样可以确保背景区域的颜色统一，
     #而前景区域的颜色根据原始的 colors 张量保持不变。
     #选择最近那个面片对应的颜色，然后将背景赋值成指定的颜色
@@ -86,9 +86,10 @@ class Renderer(nn.Module):
         self.raster_settings = RasterizationSettings(
             image_size=(int(image_size[0]), int(image_size[1])),
             blur_radius=0.0,
-            faces_per_pixel=1,
+            faces_per_pixel=1,#一定一定要注意！！！！这里只用了每个像素只track一个最近的face进行对应！！！！！！
         )
     #外部调用的主入口函数
+    #render正向推理函数
     def forward(self, input):
         mesh = input["mesh"]
         cameras = input["cameras"]

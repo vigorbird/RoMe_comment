@@ -62,8 +62,8 @@ def train(configs):
     supervise_depth_list = ["FsdDataset", "CarlaDataset"]
     # supervise_depth_list = ["CarlaDataset"]
 
-    pose_xy = np.array(dataset.ref_camera2world_all)[:, :2, 3]
-    offset_pose_xy = pose_xy - np.asarray([configs["center_point"]["x"], configs["center_point"]["y"]])
+    pose_xy = np.array(dataset.ref_camera2world_all)[:, :2, 3]#提取所有位姿的xy部分
+    offset_pose_xy = pose_xy - np.asarray([configs["center_point"]["x"], configs["center_point"]["y"]])#被减数默认等于0
     print(f"Get {len(dataset.ref_camera2world_all)} images for mapping")
 
     # Load grid and optimization toggles
@@ -78,7 +78,7 @@ def train(configs):
             print("{} optimization is OFF".format(optim_option))
 
     # Choose Different grid generator according to configs
-    if optim_dict["vertices_rgb"] and optim_dict["vertices_label"] and (not optim_dict["vertices_z"]):#默认会进入这个条件
+    if optim_dict["vertices_rgb"] and optim_dict["vertices_label"] and (not optim_dict["vertices_z"]):
         from models.voxel import SquareFlatGridRGBLabel as SquareFlatGrid
     elif optim_dict["vertices_rgb"] and (not optim_dict["vertices_label"]) and optim_dict["vertices_z"]:
         from models.voxel import SquareFlatGridRGBZ as SquareFlatGrid
@@ -87,7 +87,7 @@ def train(configs):
     elif (not optim_dict["vertices_rgb"]) and optim_dict["vertices_label"] and (not optim_dict["vertices_z"]):
         from models.voxel import SquareFlatGridLabel as SquareFlatGrid
     elif (not optim_dict["vertices_rgb"]) and optim_dict["vertices_label"] and optim_dict["vertices_z"]:
-        from models.voxel import SquareFlatGridLabelZ as SquareFlatGrid
+        from models.voxel import SquareFlatGridLabelZ as SquareFlatGrid#默认会进入这个条件
     elif optim_dict["vertices_rgb"] and optim_dict["vertices_label"] and optim_dict["vertices_z"]:
         from models.voxel import SquareFlatGridRGBLabelZ as SquareFlatGrid
     else:
@@ -98,10 +98,11 @@ def train(configs):
         grid = SquareFlatGrid(configs["bev_x_length"], configs["bev_y_length"], offset_pose_xy,
                               configs["bev_resolution"], dataset.num_class, configs["pos_enc"], configs["cut_range"])
     else:#默认会进入这个条件！
+        #这个函数非常重要！！！！设置了要被优化的张量！！！！！！！
         grid = SquareFlatGrid(configs["bev_x_length"], configs["bev_y_length"], offset_pose_xy,
                               configs["bev_resolution"], dataset.num_class, configs["cut_range"])
     grid = grid.to(device)
-    grid.init_vertices_z()#mesh顶点的所有高程全部默认设置成了零
+    grid.init_vertices_z()#mesh顶点的z坐标建立了和xy坐标的mlp关系！！！！！
 
     # Prepare trainable parameters
     parameters = []
@@ -166,7 +167,7 @@ def train(configs):
                 if optim_dict["vertices_z"]:
                     mesh = grid(activation_idx, configs["batch_size"])#非常注意！ 这个grid本质上的数据结构来自pytorch3d
                 else:#默认进入这个条件！！！！！！！
-                    mesh = grid(configs["batch_size"])
+                    mesh = grid(configs["batch_size"])#搜索  grid正向推理函数！！！！！！！！！！！！！！超级重要！！！
                 pose = poses(sample["camera_idx"])
                 if epoch >= configs["extrinsic"]["start_epoch"]:
                     transform = pose @ sample["Transform_pytorch3d"]
@@ -178,6 +179,7 @@ def train(configs):
                 focal_pytorch3d = sample["focal_pytorch3d"]
                 p0_pytorch3d = sample["p0_pytorch3d"]
                 image_shape = sample["image_shape"]
+                #pytorh3d接口！！！
                 cameras = PerspectiveCameras(
                     R=R_pytorch3d,
                     T=T_pytorch3d,
@@ -191,6 +193,9 @@ def train(configs):
                     gt_depth = sample["depth"]
                 gt_seg = sample["static_label"]
 
+                #搜索 render正向推理函数
+                #images_feature包含了多张图像，最后一维图像是轮廓，这个轮廓相当于是mask
+                #前三维度是rgb
                 images_feature, depth = renderer({"mesh": mesh, "cameras": cameras})#非常重要的函数！！！！！！！！！！
                 silhouette = images_feature[:, :, :, -1]
                 silhouette[silhouette > 0] = 1
@@ -201,8 +206,8 @@ def train(configs):
                     mask *= static_mask
 
                 images = images_feature[:, :, :, :3]
-                if optim_dict["vertices_rgb"]:
-                    images_seg = images_feature[:, :, :, 3:-1]
+                if optim_dict["vertices_rgb"]:#默认进入这个条件
+                    images_seg = images_feature[:, :, :, 3:-1]#第4个到倒数第二个位置的数据
                 else:
                     images_seg = images_feature[:, :, :, :-1]
 
